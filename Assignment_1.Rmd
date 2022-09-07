@@ -1,0 +1,202 @@
+---
+title: "Assignment 1"
+author: "500497375"
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M')`"
+output: 
+    html_document:
+        self_contained: true # Creates a single HTML file as output
+        code_folding: hide # Code folding; allows you to show/hide code chunks
+        code_download: true # Includes a menu to download the code file
+        toc: true # (Optional) Creates a table of contents!
+        toc_float: true # table of contents at the side
+        number_sections: true # (Optional) Puts numbers next to heading/subheadings
+---
+
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(visdat)
+library(janitor)
+library(tidyr)
+library(scales)
+library(gt)
+library(ggpubr)
+```
+
+## Introduction
+Garth (2022) explored different characteristics of students studying DATA2002/2902 on a wide variety of topics that covered students' social and academic life. He has also provided us a guide on importing and cleaning the data. 
+
+### Importing the data
+
+```{r reading data, message = FALSE}
+read_data = readr::read_tsv("DATA2x02 survey (2022) - Form responses 1.tsv")
+```
+
+### Data cleaning
+
+It is important to clean the dataset, as not all datasets come complete and ready for analysis. 
+
+#### Cleaning column names
+```{r}
+old_cols = colnames(read_data)
+```
+
+```{r, message = FALSE}
+new_cols = c("timestamp", "covid_positive", "living_arrangements", "height", "travel_method",
+             "travel_entertainment", "spain_budget", "overseas_travel", "anxiety", "study_hrs", "read_news", "study_load",
+             "work", "lab_zoom", "social_media", "gender", "time_of_sleep", "wake_up_time", "random_number", "steak_temperature",
+             "dominant_hand", "unit_enrolment", "exercise", "employment", "residence", "weekly_funds", "hourly_plan",
+             "weeks_behind", "on_time", "r_experience", "team_role", "data_study", "social_media_use", "year_of_study",
+             "sport", "wam", "shoe_size", "time_machine")
+
+#Overwrite previous column names with camel_case column names.
+colnames(read_data) = new_cols
+```
+
+The visdat library provides very useful information in terms of how much missing data is in the survey data file, which can give us an indication of how much missing data we need to handle. The graph below tells us how much we
+
+```{r, warning = FALSE}
+visdat::vis_miss(read_data)
+```
+
+From looking at the visdat graph above we can see that the main areas of missing data involve questions regarding WAM, Spain budget travel and weekly funds.
+
+##### Anxiety
+
+We first have a look at the values for the anxiety variable.
+
+```{r}
+unique(sort(read_data$anxiety))
+```
+
+We can see here it's a 1-10 rating and everything is okay, with the missing variables dealt with earlier.
+
+We can also check the distribution of the anxiety ratings throughout all students that answered the survey, to check that there are no non-sensible values.
+
+```{r, warning = FALSE}
+ggplot(data = read_data, aes(x = anxiety)) +
+    geom_histogram(stat = "count") + 
+    labs(x = "Anxiety rating", y = "Count") + 
+    scale_y_continuous(breaks = pretty_breaks())
+```
+
+##### Work
+
+We follow what we did for the anxiety variable in our dataset.
+
+```{r}
+unique(sort(read_data$work))
+```
+
+```{r clean work}
+read_data %>%
+    janitor::tabyl(work) %>%
+    gt::gt() %>%
+    gt::fmt_percent(columns = 3, decimals = 1) %>%
+    gt::cols_label(
+      work = md("Type of work"),
+      n = md("Count"),
+      percent = md("Proportion")) 
+```
+
+We can improve on this table by shortening the entries that people put in and by also merging categories. We assume that the first one is their main job and we merge it according to that assumption. We also assume that for those who didn't answer the question, that we merge the non-responses into the "I don't currently work" category. 
+```{r}
+read_data = read_data %>%
+  mutate(work = case_when(
+    work == "Doing internship during the vacation" ~ "Internship",
+    work == "Casual and Contractor on different jobs" ~ "Casual",
+    work == "Part time, self employed and contractor" ~ "Part time",
+    is.na(work) ~ "I don't currently work",
+    TRUE ~ work
+  ))
+```
+
+```{r work graph}
+ggplot(data = read_data, aes(x = work)) + 
+  geom_bar() + 
+  labs(title = "Employment type for DATA2x02 students", x = "Work type", y = "Count") + 
+  coord_flip()
+```
+
+The table after we merge the categories together.
+```{r}
+read_data %>%
+    janitor::tabyl(work) %>%
+    gt::gt() %>%
+    gt::fmt_percent(columns = 3, decimals = 1) %>%
+    gt::cols_label(
+      work = md("Type of work"),
+      n = md("Count"),
+      percent = md("Proportion")) 
+```
+```{r weeks behind}
+unique(sort(read_data$weeks_behind))
+```
+
+```{r, warning = False}
+ggplot(data = read_data, aes(x = weeks_behind)) +
+    geom_histogram() + 
+    labs(x = "Weeks behind", y = "Count") + 
+    scale_y_continuous(breaks = pretty_breaks())
+```
+
+Given that the semester only has 13 weeks, the responses listing that people are 16 and 20 weeks behind are a bit suspect. It would be wise to analyse these two rows to see how they have responded to the whole survey.
+
+```{r 16 weeks behind}
+read_data %>%
+  filter(weeks_behind >= 16) %>%
+  t()
+```
+
+While the first person has given reasonable responses for the rest of the survey, the second person has given very suspect responses, such as the height of 254cm and the 52 hours of exercise.
+
+```{r remove suspect response}
+read_data_clean <- read_data[!(read_data$weeks_behind == "20"),]
+read_data_clean
+```
+```{r check removed response}
+read_data_clean %>%
+  filter(weeks_behind >= 16) %>%
+  t()
+```
+It can be assumed that the person who responded 16 weeks has responded while keeping in mind mid-semester break and exam weeks, and while that might not be true, it is a much more reasonable assumption than the other person who responded with their gender as "attack helicopter", thus his row of responses has been removed.
+
+## Results
+
+### Is there evidence to suggest that there is a relationship between how anxious someone feels and the amount of weeks they are behind during the semester?
+
+Test: 2-sample t-test.
+
+We bin people with low anxiety and people with medium-high anxiety to create two sample populations.
+
+```{r anxiety vs weeks behind}
+read_data_clean$anxiety_cat <- cut(read_data_clean$anxiety,
+                                   breaks = c(0, 5, 10),
+                                   labels = c("Low anxiety", "Medium-high anxiety"))
+format_avw = read_data_clean %>%
+  group_by(anxiety_cat) %>%
+  drop_na() %>%
+  summarise(n = n(),
+            Mean = mean(weeks_behind),
+            SD = sd(weeks_behind))
+
+knitr::kable(format_avw,
+             format = "html",
+             digits = 1)
+```
+
+```{r}
+p1 <- ggplot(subset(read_data_clean, !is.na(weeks_behind))) + aes(x = anxiety_cat, y = weeks_behind, fill = anxiety_cat) +
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter() + 
+  labs(x = "Anxiety category", y = "Weeks behind")
+  #labs()
+
+p1
+```
+
+```{r}
+p2 <- ggqqplot(subset(read_data_clean, !is.na(weeks_behind)), x = "weeks_behind", facet.by = "anxiety_cat")
+p2
+```
